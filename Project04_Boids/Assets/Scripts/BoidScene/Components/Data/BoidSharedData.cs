@@ -3,14 +3,19 @@ using Unity.Mathematics;
 
 namespace ATM.DOTS.Project04
 {
-    public struct BoidData : IComponentData
+    /// <summary>
+    /// Stores common data of a boid group.
+    /// </summary>
+    public struct BoidSharedData : ISharedComponentData
     {
         public float minForwardSpeed;
         public float maxForwardSpeed;
         public float rotationSpeed;
 
-        public float3 boidBoundsSize;
-        public float3 boidBoundsCenter;
+        public float3 boundsSize;
+        public float3 boundsCenter;
+        public float partitionsSize;
+
         public float insideBoundsDistance;
         public float insideBoundsWeight;
 

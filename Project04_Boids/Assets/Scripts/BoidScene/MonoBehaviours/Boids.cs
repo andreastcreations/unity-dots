@@ -10,13 +10,20 @@ using Random = Unity.Mathematics.Random;
 
 namespace ATM.DOTS.Project04
 {
+    /// <summary>
+    /// The main component that creates the basic entity archetype of a single boid and spawns the entities based on that archetype.
+    /// </summary>
+    [RequireComponent(typeof(BoidsColor))]
+    [RequireComponent(typeof(BoidsBounds))]
+    [RequireComponent(typeof(BoidsMovement))]
+    [RequireComponent(typeof(BoidsBehaviours))]
     public class Boids : MonoBehaviour
     {
-        [Header("RealTime")]
+        [Header("RealTime (Editor Only)")]
         [SerializeField]
         private bool _updateBoidValues = false;
 
-        [Header("Spawn Setup")]
+        [Header("Setup")]
         [SerializeField]
         private Mesh _mesh;
         [SerializeField, Min(0f)]
@@ -26,45 +33,17 @@ namespace ATM.DOTS.Project04
         [SerializeField, Min(1)]
         private int _boidSize = 1;
 
-        [Header("Boid Bounds")]
-        [SerializeField]
-        private Vector3 _spawnBounds;
-        [SerializeField]
-        private Vector3 _spawnBoundsCenter;
-        [Range(0f, 10f)]
-        [SerializeField] private float _insideBoundsDistance;
-        [Range(0f, 10f)]
-        [SerializeField] private float _insideBoundsWeight;
-
-        [Header("Speed Setup")]
-        [Range(0f, 10f)]
-        [SerializeField] private float _minSpeed;
-        [Range(0f, 10f)]
-        [SerializeField] private float _maxSpeed;
-        [Range(0f, 50f)]
-        [SerializeField] private float _rotationSpeed;
-
-        [Header("Boid Cohesion")]
-        [Range(0f, 10f)]
-        [SerializeField] private float _cohesionDistance;
-        [Range(0f, 10f)]
-        [SerializeField] private float _cohesionWeight;
-
-        [Header("Boid Avoidance")]
-        [Range(0f, 10f)]
-        [SerializeField] private float _avoidanceDistance;
-        [Range(0f, 10f)]
-        [SerializeField] private float _avoidanceWeight;
-
-        [Header("Boid Alignment")]
-        [Range(0f, 10f)]
-        [SerializeField] private float _aligementDistance;
-        [Range(0f, 10f)]
-        [SerializeField] private float _aligementWeight;
+        private BoidsColor _boidsColor;
+        private BoidsBounds _boidsBounds;
+        private BoidsMovement _boidsMovement;
+        private BoidsBehaviours _boidsBehaviours;
 
         private EntityManager _entityManager;
         private Random _random;
 
+        /// <summary>
+        /// The parallel job that spawns all the boids.
+        /// </summary>
         [BurstCompatible]
         public struct BoidSpawnJob : IJobParallelFor
         {
@@ -72,7 +51,7 @@ namespace ATM.DOTS.Project04
             public Random entitySeed;
             public Entity entityPrototype;
             public int entityCount;
-            public Vector3 spawnBounds;
+            public Vector3 spawnBoundsSize;
             public Vector3 spawnerPosition;
 
             public void Execute(int index)
@@ -94,7 +73,7 @@ namespace ATM.DOTS.Project04
                 Vector3 insideUnitCircle = new Vector3(entitySeed.NextFloat(-1f, 1f),
                                                        entitySeed.NextFloat(-1f, 1f),
                                                        entitySeed.NextFloat(-1f, 1f));
-                Vector3 randomVector = Vector3.Scale(spawnBounds, insideUnitCircle);
+                Vector3 randomVector = Vector3.Scale(spawnBoundsSize, insideUnitCircle);
                 Vector3 spawnPosition = spawnerPosition + randomVector;
 
                 return new float3(spawnPosition.x, spawnPosition.y, spawnPosition.z);
@@ -106,35 +85,61 @@ namespace ATM.DOTS.Project04
             }
         }
 
+        /// <summary>
+        /// This parallel job is used to manipulate the boids' shared data at runtime.<br/>
+        /// </summary>
+        /// <remarks>
+        /// WARNING: Used to decide the final values of the boids in the Editor. Not for actual in-game use.
+        /// </remarks>
         [BurstCompatible]
         private struct ManipulateBoidDataJob : IJobParallelFor
         {
             public EntityCommandBuffer.ParallelWriter entityCommandBuffer;
             [ReadOnly, DeallocateOnJobCompletion] public NativeArray<Entity> entities;
+
+            public float4 color;
+            public float4 emission;
+
             public float minForwardSpeed;
             public float maxForwardSpeed;
             public float rotationSpeed;
+
             public float3 boidBoundsSize;
             public float3 boidBoundsCenter;
+            public float partitionsSize;
+
             public float insideBoundsDistance;
             public float insideBoundsWeight;
+
             public float cohesionDistance;
             public float cohesionWeight;
+
             public float avoidanceDistance;
             public float avoidanceWeight;
+
             public float alignmentDistance;
             public float alignmentWeight;
 
             public void Execute(int index)
             {
-                entityCommandBuffer.SetComponent(index, entities[index], new BoidData
+                entityCommandBuffer.SetComponent(index, entities[index], new BasicMaterial_ColorData
+                {
+                    materialColor = color
+                });
+                entityCommandBuffer.SetComponent(index, entities[index], new BasicMaterial_EmissionData
+                {
+                    emissionColor = emission
+                });
+                entityCommandBuffer.SetSharedComponent(index, entities[index], new BoidSharedData
                 {
                     minForwardSpeed = minForwardSpeed,
                     maxForwardSpeed = maxForwardSpeed,
                     rotationSpeed = rotationSpeed,
 
-                    boidBoundsSize = boidBoundsSize,
-                    boidBoundsCenter = boidBoundsCenter,
+                    boundsSize = boidBoundsSize,
+                    boundsCenter = boidBoundsCenter,
+                    partitionsSize = partitionsSize,
+
                     insideBoundsDistance = insideBoundsDistance,
                     insideBoundsWeight = insideBoundsWeight,
 
@@ -152,6 +157,11 @@ namespace ATM.DOTS.Project04
 
         private void Awake()
         {
+            _boidsColor = GetComponent<BoidsColor>();
+            _boidsMovement = GetComponent<BoidsMovement>();
+            _boidsBounds = GetComponent<BoidsBounds>();
+            _boidsBehaviours = GetComponent<BoidsBehaviours>();
+
             _random = new Random(100);
         }
 
@@ -160,6 +170,7 @@ namespace ATM.DOTS.Project04
             SpawnBoids();
         }
 
+#if UNITY_EDITOR
         private void Update()
         {
             if (_updateBoidValues)
@@ -167,7 +178,11 @@ namespace ATM.DOTS.Project04
                 UpdateBoidsInRealTime();
             }
         }
+#endif
 
+        /// <summary>
+        /// Creates the entity archetype of a boid and spawns a whole bunch of them using the <see cref="BoidSpawnJob"/>.
+        /// </summary>
         private void SpawnBoids()
         {
             _entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
@@ -179,14 +194,12 @@ namespace ATM.DOTS.Project04
                 typeof(Rotation),
                 typeof(Scale),
                 typeof(LocalToWorld),
-                // Tags
-                typeof(BoidTag),
                 // Custom
                 typeof(BasicMaterial_ColorData),
                 typeof(BasicMaterial_SmoothnessData),
                 typeof(BasicMaterial_AmbientOcclusionData),
                 typeof(BasicMaterial_EmissionData),
-                typeof(BoidData)
+                typeof(BoidSharedData)
             );
 
             Entity entityPrototype = _entityManager.CreateEntity(entityArchetype);
@@ -211,7 +224,7 @@ namespace ATM.DOTS.Project04
             });
             _entityManager.AddComponentData(entityPrototype, new BasicMaterial_ColorData
             {
-                materialColor = new float4(1f, 1f, 1f, 1f)
+                materialColor = ColorToFloat4(_boidsColor.Color)
             });
             _entityManager.AddComponentData(entityPrototype, new BasicMaterial_SmoothnessData
             {
@@ -223,27 +236,29 @@ namespace ATM.DOTS.Project04
             });
             _entityManager.AddComponentData(entityPrototype, new BasicMaterial_EmissionData
             {
-                emissionColor = new float4(0.5f, 1f, 0f, 0f)
+                emissionColor = ColorToFloat4(_boidsColor.Emission)
             });
-            _entityManager.AddComponentData(entityPrototype, new BoidData
+            _entityManager.AddSharedComponentData(entityPrototype, new BoidSharedData
             {
-                minForwardSpeed = _minSpeed,
-                maxForwardSpeed = _maxSpeed,
-                rotationSpeed = _rotationSpeed,
+                minForwardSpeed = _boidsMovement.MinSpeed,
+                maxForwardSpeed = _boidsMovement.MaxSpeed,
+                rotationSpeed = _boidsMovement.RotationSpeed,
 
-                boidBoundsSize = _spawnBounds,
-                boidBoundsCenter = _spawnBoundsCenter,
-                insideBoundsDistance = _insideBoundsDistance,
-                insideBoundsWeight = _insideBoundsWeight,
+                boundsSize = _boidsBounds.Size,
+                boundsCenter = _boidsBounds.Center,
+                partitionsSize = _boidsBounds.PartitionsSize,
 
-                cohesionDistance = _cohesionDistance,
-                cohesionWeight = _cohesionWeight,
+                insideBoundsDistance = _boidsBehaviours.InsideBounds.distance,
+                insideBoundsWeight = _boidsBehaviours.InsideBounds.weight,
 
-                avoidanceDistance = _avoidanceDistance,
-                avoidanceWeight = _avoidanceWeight,
+                cohesionDistance = _boidsBehaviours.Cohesion.distance,
+                cohesionWeight = _boidsBehaviours.Cohesion.weight,
 
-                alignmentDistance = _aligementDistance,
-                alignmentWeight = _aligementWeight
+                avoidanceDistance = _boidsBehaviours.Avoidance.distance,
+                avoidanceWeight = _boidsBehaviours.Avoidance.weight,
+
+                alignmentDistance = _boidsBehaviours.Alignment.distance,
+                alignmentWeight = _boidsBehaviours.Alignment.weight
             });
 
             BoidSpawnJob boidSpawnJob = new BoidSpawnJob
@@ -252,8 +267,8 @@ namespace ATM.DOTS.Project04
                 entitySeed = _random,
                 entityPrototype = entityPrototype,
                 entityCount = _boidSize,
-                spawnBounds = _spawnBounds,
-                spawnerPosition = transform.position
+                spawnBoundsSize = _boidsBounds.Size,
+                spawnerPosition = _boidsBounds.Center
             };
 
             JobHandle spawnHandle = boidSpawnJob.Schedule(_boidSize, 128);
@@ -264,6 +279,12 @@ namespace ATM.DOTS.Project04
             _entityManager.DestroyEntity(entityPrototype);
         }
 
+        /// <summary>
+        /// Updates the boids' shared data in realtime by using the <see cref="ManipulateBoidDataJob"/>.<br/>
+        /// </summary>
+        /// <remarks>
+        /// WARNING: Used to decide the final values of the boids in the Editor. Not for actual in-game use.
+        /// </remarks>
         private void UpdateBoidsInRealTime()
         {
             EntityCommandBuffer entityCommandBuffer = new EntityCommandBuffer(Allocator.TempJob);
@@ -271,20 +292,30 @@ namespace ATM.DOTS.Project04
             ManipulateBoidDataJob manipulateBoidDataJob = new ManipulateBoidDataJob
             {
                 entityCommandBuffer = entityCommandBuffer.AsParallelWriter(),
-                entities = _entityManager.CreateEntityQuery(ComponentType.ReadOnly<BoidTag>()).ToEntityArray(Allocator.TempJob),
-                minForwardSpeed = _minSpeed,
-                maxForwardSpeed = _maxSpeed,
-                rotationSpeed = _rotationSpeed,
-                boidBoundsSize = _spawnBounds,
-                boidBoundsCenter = _spawnBoundsCenter,
-                insideBoundsDistance = _insideBoundsDistance,
-                insideBoundsWeight = _insideBoundsWeight,
-                cohesionDistance = _cohesionDistance,
-                cohesionWeight = _cohesionWeight,
-                avoidanceDistance = _avoidanceDistance,
-                avoidanceWeight = _avoidanceWeight,
-                alignmentDistance = _aligementDistance,
-                alignmentWeight = _aligementWeight
+                entities = _entityManager.CreateEntityQuery(ComponentType.ReadOnly<BoidSharedData>()).ToEntityArray(Allocator.TempJob),
+
+                color = ColorToFloat4(_boidsColor.Color),
+                emission = ColorToFloat4(_boidsColor.Emission),
+
+                minForwardSpeed = _boidsMovement.MinSpeed,
+                maxForwardSpeed = _boidsMovement.MaxSpeed,
+                rotationSpeed = _boidsMovement.RotationSpeed,
+
+                boidBoundsSize = _boidsBounds.Size,
+                boidBoundsCenter = _boidsBounds.Center,
+                partitionsSize = _boidsBounds.PartitionsSize,
+
+                insideBoundsDistance = _boidsBehaviours.InsideBounds.distance,
+                insideBoundsWeight = _boidsBehaviours.InsideBounds.weight,
+
+                cohesionDistance = _boidsBehaviours.Cohesion.distance,
+                cohesionWeight = _boidsBehaviours.Cohesion.weight,
+
+                avoidanceDistance = _boidsBehaviours.Avoidance.distance,
+                avoidanceWeight = _boidsBehaviours.Avoidance.weight,
+
+                alignmentDistance = _boidsBehaviours.Alignment.distance,
+                alignmentWeight = _boidsBehaviours.Alignment.weight
             };
 
             JobHandle manipulationHandle = manipulateBoidDataJob.Schedule(_boidSize, 128);
@@ -292,6 +323,14 @@ namespace ATM.DOTS.Project04
 
             entityCommandBuffer.Playback(_entityManager);
             entityCommandBuffer.Dispose();
+        }
+
+        /// <summary>
+        /// Transforms the RGBA values of a <see cref="Color"/> to a <see cref="float4"/>.
+        /// </summary>
+        private float4 ColorToFloat4(Color color)
+        {
+            return new float4(color.r, color.g, color.b, color.a);
         }
     }
 }
